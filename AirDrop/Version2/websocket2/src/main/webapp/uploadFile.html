@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>基于websocket进行文件传输</title>
+    <link rel="stylesheet" href="bootstrap.css">
+    <script src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
+</head>
+<body class="container" style="width: 60%">
+<div class="form-group"></br>
+    <h3 style="align-content: center;text-align: center;color:#000080;">基于websocket进行文件传输</h3>
+    <hr/>
+    <button onclick="openWebSocket()" class="bottonStyle">开启WebSocket连接</button>&emsp;&emsp;
+    <button onclick="closeWebSocket()" class="bottonStyle">关闭WebSocket连接</button>
+    <hr/>
+    <a href="javascript:;" class="bottonStyle">选择文件
+        <input type="file" name="" onchange="fileOnchange()" id="fileId"> <span id="filename" style="color: green"></span>
+    </a>
+    <a href="javascript:;" onclick="uploadFileFun()" class="bottonStyle">
+        上传
+    </a>
+</div>
+<div class="progress">
+    <div id="speedP" class="progress-bar" role="progressbar" aria-valuenow="60"
+         aria-valuemin="0" aria-valuemax="100" style="width: 0%;background-color: #000080;color: #000080;">
+    </div>
+</div>
+
+<div class="form-group"></br>
+    <h5>文件传输详情</h5>
+    <textarea id="message_content" class="form-control" readonly="readonly" cols="50"
+              rows="10"></textarea>
+</div>
+
+<script>
+    var socket;
+    var webSocketUrl = "ws://192.168.43.120:8080/UploadFileWebSocket/upload/";
+    var roomId = Number(Math.random().toString().substr(3, 3) + Date.now()).toString(36);
+    var SpeedOfProgress = "";                                                //进度
+    var fileObject;                                                          //文件对象
+    var uploadFlag = true;                                                   //文件上传的标识
+    var paragraph = 10485760;                                                //文件分块上传大小
+    var startSize, endSize = 0;                                              //文件的起始大小和文件的结束大小
+    var i = 0;                                                               //第几部分文件
+    openWebSocket(roomId);                                          //自动调用
+    //创建websocket连接
+    function openWebSocket(roomId) {
+        if (!socket) {                                                       //避免重复连接
+            console.log(roomId);
+            socket = new WebSocket(webSocketUrl+roomId);
+            socket.onopen = function () {
+                alert('成功开启与服务器的websocket连接！');
+            };
+            socket.onmessage = function (e) {
+                if (uploadFlag) {
+                    //服务端发送的消息
+                    $("#message_content").append(e.data + '\n');
+                }
+            };
+            socket.onclose = function () {
+                alert('成功断开与服务器的websocket连接！');
+            }
+        } else {
+            alert('已开启与服务器的websocket连接，不可重复开启！');
+        }
+    }
+
+    //监听窗口关闭事件，当窗口关闭时，主动去关闭websocket连接，防止连接还没断开就关闭窗口，server端会抛异常。
+    window.onbeforeunload = function () {
+        closeWebSocket();
+    }
+
+    //关闭WebSocket连接
+    function closeWebSocket() {
+        socket.close();
+        socket = null;
+    }
+
+    //文件上传核心方法
+    function uploadFileFun() {
+        //文件对象赋值
+        let filedata = fileObject;
+        //切换保存标识的状态
+        uploadFlag = false;
+        //先向后台传输文件名
+        let fileName = fileObject.name;
+        //后台只接收字符串类型，我们定义一个字符串的json对象给后台解析
+        let fileJson = {
+            type: "fileName",
+            data: fileName
+        };
+
+        //后台接收到文件名以后会正式开始传输文件
+        socket.send(JSON.stringify(fileJson));
+        console.log(JSON.stringify(fileJson));
+
+        //此处为文件上传的核心中的核心，涉及分块上传
+        socket.onmessage = function (msg) {
+            if (uploadFlag === false) {
+                //开始上传文件
+                if (msg.data === 'ok') {
+                    // 判断结束大小是否大于文件大小
+                    if (endSize < filedata.size) {
+                        $("#message_content").append("==============================================\n");
+                        $("#message_content").append("文件大小:" + filedata.size+ '（Byte）\n');
+                        startSize = endSize;
+                        endSize += paragraph;
+                        $("#message_content").append("文件传输起始字节:" + startSize+'（Byte）\n');
+                        $("#message_content").append("文件传输最大结束字节:" + endSize+'（Byte）\n');
+                        SpeedOfProgress = Math.round(startSize / filedata.size * 10000) / 100.00 + "%";
+                        $("#speedP").css("width",SpeedOfProgress);
+                        $("#message_content").append("==================================================\n");
+                        $("#message_content").append("分片传输--->"+'\n');
+                        var blob = filedata.slice(startSize, endSize);
+                        var reader = new FileReader();
+                        reader.readAsArrayBuffer(blob);
+                        reader.onload = function loaded(evt) {
+                            var ArrayBuffer = evt.target.result;
+                            $("#message_content").append("==============================================\n");
+                            $("#message_content").append("发送文件第" + (++i) + "部分（片）"+'\n');
+                            let fileObjJson={
+                                type: "fileCount",
+                                data:i
+                            };
+                            socket.send(JSON.stringify(fileObjJson));
+                            socket.send(ArrayBuffer);
+                        }
+                    } else {
+                        $("#speedP").css("width","100%");
+                        $("#message_content").append("文件传输最大结束字节 >= 文件大小（字节）-->" + msg.data + "!"+'\n');
+                        $("#message_content").append("文件传输最大结束字节 >= 文件大小（字节）-->文件传输最大结束字节:" + endSize+'\n');
+                        $("#message_content").append("文件传输最大结束字节 >= 文件大小（字节）-->文件大小（字节）:" + filedata.size+'\n');
+                        startSize = endSize = 0;
+                        i = 0;
+                        $("#message_content").append("==============================================\n");
+                        $("#message_content").append(filedata.name + "文件发送完毕"+'\n');
+                        socketmess={
+                            type:"over",
+                            message:filedata.name
+                        };
+                        socket.send(JSON.stringify(socketmess));                //告诉socket文件传输完毕，清空计数器
+                    }
+                } else {
+                    //此处获取
+                    $("#message_content").append("文件保存路径为："+msg.data+'\n');
+                    $("#message_content").append("==============================================\n");
+                }
+            }
+        }
+
+
+    }
+
+    //监听file域对象的变化，然后用于回显文件名
+    function fileOnchange() {
+        //从file域对象获取文件对象
+        let files = $("#fileId")[0].files;
+        //存储文件对象
+        fileObject = files[0];
+        //回显文件名
+        $("#filename").html(fileObject.name);
+    }
+
+</script>
+<style>
+    .bottonStyle {
+        position: relative;
+        display: inline-block;
+        background: #000080;
+        border: 1px solid #4169E1;
+        border-radius: 4px;
+        padding: 4px 12px;
+        overflow: hidden;
+        color: #FFFFFF;
+        text-decoration: none;
+        text-indent: 0;
+        line-height: 20px;
+    }
+
+    .bottonStyle input {
+        position: absolute;
+        font-size: 100px;
+        right: 0;
+        top: 0;
+        opacity: 0;
+    }
+
+    .bottonStyle:hover {
+        background: #4169E1;
+        border-color: #78C3F3;
+        color: #F0FFFF;
+        text-decoration: none;
+    }
+
+    .form-control:focus {
+        color: #495057;
+        background-color: #fff;
+        border-color: #4169E1;
+        outline: 0;
+        box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.6);
+    }
+</style>
+</body>
+</html>
