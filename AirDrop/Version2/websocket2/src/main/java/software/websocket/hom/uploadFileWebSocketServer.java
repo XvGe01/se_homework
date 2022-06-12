@@ -25,8 +25,6 @@ import java.net.InetAddress;
  * ClassName: uploadFileWebSocketServer <br/>
  * Description: <br/>
  * date: 2022/5/15<br/>
- *
- * @author XvGe<br />
  * @since JDK 1.8
  */
 @ServerEndpoint("/upload/{sid}")
